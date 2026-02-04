@@ -45,7 +45,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 3. Gemini 요약 함수 (날짜 추출 추가)
+# 3. Gemini 요약 함수 (국문 요약만)
 async def summarize_article(text):
     # 최신 모델 사용 (Gemini 2.5 Flash Lite)
     model = genai.GenerativeModel('models/gemini-2.5-flash-lite')
@@ -113,7 +113,7 @@ async def scrape_and_process():
 
             try:
                 article_url = None
-                pub_date = None # 실제 발행일 변수
+                pub_date = None
 
                 # 1. OpenAI: RSS Strategy
                 if "openai.com" in url:
@@ -131,7 +131,6 @@ async def scrape_and_process():
                                 print(f"  🎯 RSS Found: {rss_link}")
                                 article_url = rss_link
                                 
-                                # Extract Date from RSS
                                 pub_date_raw = items[0].find('pubDate')
                                 if pub_date_raw:
                                     try:
@@ -141,41 +140,100 @@ async def scrape_and_process():
                     except Exception as e:
                         print(f"  ⚠️ RSS Error: {e}")
 
-                # 2. Anthropic: PublicationList Strategy
+                # 2. Anthropic: PublicationList & ArticleList Strategy
                 if not article_url and "anthropic.com" in url:
                     print("  🕵️‍♂️ Probing Anthropic List...")
                     try:
                         await page.goto(url, timeout=30000, wait_until='domcontentloaded')
-                        try:
-                            await page.wait_for_selector("ul[class*='PublicationList']", timeout=5000)
-                        except: pass
                         
+                        # Strategy A: Research/News style (PublicationList)
                         anthropic_links = await page.locator("ul[class*='PublicationList'] li a").all()
+                        
+                        # Strategy B: Engineering style (ArticleList)
                         if not anthropic_links:
+                             print("  🕵️‍♂️ Trying ArticleList strategy (Engineering)...")
+                             anthropic_links = await page.locator("article[class*='ArticleList'] a").all()
+
+                        if not anthropic_links:
+                             # Fallback
                              anthropic_links = await page.locator("main ul li a").all()
 
                         for link in anthropic_links:
                             href = await link.get_attribute("href")
-                            if href and ("/research/" in href or "/news/" in href or "/index/" in href):
+                            if href and ("/research/" in href or "/news/" in href or "/index/" in href or "/engineering/" in href):
                                 article_url = href
                                 if not article_url.startswith("http"):
                                     article_url = urljoin(url, article_url)
                                 print(f"  🎯 Anthropic Target: {article_url}")
                                 
-                                # Extract Date from HTML (<time> tag inside the link)
+                                # Extract Date
                                 try:
-                                    time_el = link.locator("time")
-                                    if await time_el.count() > 0:
-                                        date_text = await time_el.first.inner_text()
+                                    # Try 'time' tag first (Research)
+                                    date_el = link.locator("time")
+                                    if await date_el.count() > 0:
+                                        date_text = await date_el.first.inner_text()
                                         pub_date = parser.parse(date_text).strftime("%Y-%m-%d")
-                                        print(f"  📅 Date found (HTML): {pub_date}")
-                                except Exception as e:
-                                    print(f"  ⚠️ Date parse error: {e}")
+                                        print(f"  📅 Date found (HTML time): {pub_date}")
+                                    else:
+                                        # Try class containing 'date' (Engineering)
+                                        date_div = link.locator("div[class*='date']")
+                                        if await date_div.count() > 0:
+                                            date_text = await date_div.first.inner_text()
+                                            pub_date = parser.parse(date_text).strftime("%Y-%m-%d")
+                                            print(f"  📅 Date found (HTML div): {pub_date}")
+                                except Exception as e: 
+                                    print(f"  ⚠️ Date parse debug: {e}")
                                 break
                     except Exception as e:
                         print(f"  ⚠️ Anthropic Error: {e}")
 
-                # 3. General Fallback
+                # 3. Google Blog Strategy (Latest Articles Feed)
+                if not article_url and "blog.google" in url:
+                    print("  🕵️‍♂️ Probing Google Blog (Latest Feed)...")
+                    try:
+                        if page.url != url:
+                            await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                        
+                        # Wait for the feed to appear
+                        try:
+                            await page.wait_for_selector("ul.article-list__feed", timeout=5000)
+                        except: pass
+                        
+                        # Find the first item in the 'All the Latest' feed
+                        latest_items = await page.locator("ul.article-list__feed li.article-list__item").all()
+                        
+                        if latest_items:
+                            # Usually the first item is the newest in this specific feed
+                            first_item = latest_items[0]
+                            
+                            # Extract Link
+                            link_el = first_item.locator("a.feed-article__overlay")
+                            if await link_el.count() > 0:
+                                href = await link_el.get_attribute("href")
+                                if href:
+                                    article_url = href
+                                    if not article_url.startswith("http"):
+                                        article_url = urljoin(url, article_url)
+                                    print(f"  🎯 Google Target (Feed): {article_url}")
+                                    
+                                    # Extract Date (e.g., "Feb 02", "Dec 2025")
+                                    try:
+                                        date_el = first_item.locator("span.eyebrow__date")
+                                        if await date_el.count() > 0:
+                                            date_text = await date_el.inner_text()
+                                            # If year is missing (e.g. "Feb 02"), parser assumes current year.
+                                            # If today is 2026 and date is "Dec", parser might default to Dec 2026 (future).
+                                            # We need to handle this carefully or trust dateutil for now.
+                                            # "Dec 2025" works fine. "Feb 02" works fine for current year.
+                                            pub_date = parser.parse(date_text).strftime("%Y-%m-%d")
+                                            print(f"  📅 Date found (HTML): {pub_date}")
+                                    except Exception as e:
+                                        print(f"  ⚠️ Google Date parse error: {e}")
+                                        
+                    except Exception as e:
+                        print(f"  ⚠️ Google Error: {e}")
+
+                # 4. General Fallback
                 if not article_url:
                     if page.url != url:
                         await page.goto(url, timeout=60000, wait_until='domcontentloaded')
@@ -226,14 +284,9 @@ async def scrape_and_process():
                     result = await summarize_article(content)
                     
                     if result:
-                        # Final Date Decision
-                        # If we found a date via RSS/HTML, use it.
-                        # If not, try Gemini's extracted date.
-                        # If all fails, use Today.
                         final_date = pub_date
                         if not final_date and result.get('published_date'):
                             try:
-                                # Validate extracted date format
                                 final_date = parser.parse(result.get('published_date')).strftime("%Y-%m-%d")
                             except: pass
                         
@@ -250,7 +303,7 @@ async def scrape_and_process():
                             article_url, 
                             "", 
                             result.get('summary_kr', '요약 없음'), 
-                            final_date, # Corrected Date
+                            final_date,
                             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         ))
                         conn.commit()
@@ -272,6 +325,7 @@ async def scrape_and_process():
 def generate_report():
     conn = sqlite3.connect(DB_PATH)
     today_str = datetime.now().strftime('%Y-%m-%d')
+    time_str = datetime.now().strftime('%H-%M')
     
     try:
         df = pd.read_sql_query("SELECT * FROM articles", conn)
@@ -279,22 +333,20 @@ def generate_report():
         df = pd.DataFrame()
     conn.close()
     
-    # Create directory if it doesn't exist
+    # Ensure daily_reports directory exists
     output_dir = "daily_reports"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+        
+    filename = os.path.join(output_dir, f"{today_str}_{time_str}_AI_NEWS_DAILY.md")
     
-    filename = os.path.join(output_dir, f"{today_str}_AI_NEWS_DAILY.md")
-    
-    md_content = f"# 📅 {today_str} AI NEWS DAILY\n\n"
+    md_content = f"# 📅 {today_str} AI NEWS DAILY ({time_str})\n\n"
     md_content += "---\n\n"
     
     if df.empty:
         md_content += "수집된 뉴스가 없습니다.\n"
     else:
-        # Sort by scraped_at desc
         df = df.sort_values(by='scraped_at', ascending=False)
-        # Group by source, take latest
         latest_df = df.groupby('source', as_index=False).head(1)
         
         for _, row in latest_df.iterrows():
