@@ -1,0 +1,8 @@
+.env
+news.db
+__pycache__/
+*.pyc
+.DS_Store
+venv/
+node_modules/
+check_anthropic.py

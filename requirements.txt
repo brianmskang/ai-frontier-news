@@ -1,0 +1,6 @@
+playwright
+google-generativeai
+python-dotenv
+pandas
+beautifulsoup4
+lxml
