@@ -279,7 +279,12 @@ def generate_report():
         df = pd.DataFrame()
     conn.close()
     
-    filename = f"{today_str}_AI_NEWS_DAILY.md"
+    # Create directory if it doesn't exist
+    output_dir = "daily_reports"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    filename = os.path.join(output_dir, f"{today_str}_AI_NEWS_DAILY.md")
     
     md_content = f"# 📅 {today_str} AI NEWS DAILY\n\n"
     md_content += "---\n\n"
