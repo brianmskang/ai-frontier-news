@@ -18,7 +18,16 @@ load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Get the directory where the script is located
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Get current working directory (useful for GitHub Actions)
+CWD = os.getcwd()
+
+def get_path(filename):
+    # Try CWD first (important for GHA), then fall back to script directory
+    cwd_path = os.path.join(CWD, filename)
+    if os.path.exists(cwd_path):
+        return cwd_path
+    return os.path.join(SCRIPT_DIR, filename)
 
 if not API_KEY:
     print("❌ Error: .env 파일에 GEMINI_API_KEY가 없습니다.")
@@ -27,7 +36,7 @@ if not API_KEY:
 genai.configure(api_key=API_KEY)
 
 # 2. DB 초기화
-DB_PATH = os.path.join(BASE_DIR, "news.db")
+DB_PATH = get_path("news.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -101,7 +110,7 @@ async def scrape_and_process():
     init_db()
     
     try:
-        sources_df = pd.read_csv(os.path.join(BASE_DIR, "sources.csv"))
+        sources_df = pd.read_csv(get_path("sources.csv"))
     except Exception as e:
         print(f"❌ Error reading sources.csv: {e}")
         return
@@ -359,7 +368,8 @@ def generate_report():
     conn.close()
     
     # Ensure daily_reports directory exists
-    output_dir = os.path.join(BASE_DIR, "daily_reports")
+    # Use CWD for output directory (repo root in GHA)
+    output_dir = os.path.join(CWD, "daily_reports")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         

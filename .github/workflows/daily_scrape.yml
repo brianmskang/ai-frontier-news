@@ -9,6 +9,8 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 리포트 푸시를 위해 쓰기 권한 필요
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
