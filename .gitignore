@@ -6,7 +6,7 @@ __pycache__/
 venv/
 node_modules/
 check_anthropic.py
-daily_reports/
+# daily_reports/ (Removed to allow syncing to GitHub)
 *.md
 .gemini/
 gha-creds-*.json
