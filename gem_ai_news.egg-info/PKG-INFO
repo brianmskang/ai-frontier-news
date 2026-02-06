@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: gem-ai-news
+Version: 0.1.0
+Requires-Dist: playwright
+Requires-Dist: google-generativeai
+Requires-Dist: python-dotenv
+Requires-Dist: pandas
+Requires-Dist: beautifulsoup4
+Requires-Dist: lxml
+Requires-Dist: python-dateutil
+Requires-Dist: requests
+Dynamic: requires-dist

@@ -8,3 +8,5 @@ node_modules/
 check_anthropic.py
 daily_reports/
 *.md
+.gemini/
+gha-creds-*.json

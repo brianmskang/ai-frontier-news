@@ -1,0 +1,2 @@
+[console_scripts]
+gem-ai-news = scraper:run_cli

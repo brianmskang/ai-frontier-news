@@ -1,0 +1,9 @@
+README.md
+scraper.py
+setup.py
+gem_ai_news.egg-info/PKG-INFO
+gem_ai_news.egg-info/SOURCES.txt
+gem_ai_news.egg-info/dependency_links.txt
+gem_ai_news.egg-info/entry_points.txt
+gem_ai_news.egg-info/requires.txt
+gem_ai_news.egg-info/top_level.txt

@@ -17,6 +17,9 @@ from dateutil import parser
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
+# Get the directory where the script is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 if not API_KEY:
     print("❌ Error: .env 파일에 GEMINI_API_KEY가 없습니다.")
     exit(1)
@@ -24,7 +27,7 @@ if not API_KEY:
 genai.configure(api_key=API_KEY)
 
 # 2. DB 초기화
-DB_PATH = "news.db"
+DB_PATH = os.path.join(BASE_DIR, "news.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -48,7 +51,10 @@ def init_db():
 # 3. Gemini 요약 함수 (국문 요약만)
 async def summarize_article(text):
     # 최신 모델 사용 (Gemini 2.5 Flash Lite)
-    model = genai.GenerativeModel('models/gemini-2.5-flash-lite')
+    model = genai.GenerativeModel(
+        model_name='models/gemini-2.5-flash-lite',
+        generation_config={"response_mime_type": "application/json"}
+    )
     prompt = f"""
     You are an expert tech news editor. Analyze the following text and extract the information in JSON format.
     
@@ -63,18 +69,28 @@ async def summarize_article(text):
         "published_date": "YYYY-MM-DD"
     }}
     Instructions:
+    - MUST provide all fields. DO NOT use null or empty strings.
     - Extract the publication date from the text if available. Format as YYYY-MM-DD.
-    - If no date is found, leave "published_date" empty.
+    - If no date is found, leave "published_date" empty (but still provide the key).
+    - Translate the headline and provide a concise 3-point summary in Korean.
     """
     try:
         response = await model.generate_content_async(prompt)
         content = response.text
+        # JSON 모드 사용 시 바로 파싱 가능하나 안전을 위해 처리
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
             content = content.split("```")[1].split("```")[0]
         
-        return json.loads(content)
+        data = json.loads(content)
+        
+        # Ensure no None values
+        for key in ["title_en", "title_kr", "summary_kr", "published_date"]:
+            if data.get(key) is None:
+                data[key] = ""
+        
+        return data
     except Exception as e:
         print(f"  ⚠️ Gemini Error: {e}")
         return None
@@ -85,7 +101,7 @@ async def scrape_and_process():
     init_db()
     
     try:
-        sources_df = pd.read_csv("sources.csv")
+        sources_df = pd.read_csv(os.path.join(BASE_DIR, "sources.csv"))
     except Exception as e:
         print(f"❌ Error reading sources.csv: {e}")
         return
@@ -283,7 +299,11 @@ async def scrape_and_process():
                     print("  🤖 Gemini Processing...")
                     result = await summarize_article(content)
                     
-                    if result:
+                    # Ensure result is a dictionary
+                    if result and isinstance(result, list) and len(result) > 0:
+                        result = result[0]
+
+                    if result and isinstance(result, dict):
                         final_date = pub_date
                         if not final_date and result.get('published_date'):
                             try:
@@ -324,42 +344,62 @@ async def scrape_and_process():
 
 def generate_report():
     conn = sqlite3.connect(DB_PATH)
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    time_str = datetime.now().strftime('%H-%M')
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    
+    # 발행일(published_date) 기준 필터링: 어제와 오늘(2일치) 기사만 포함
+    from datetime import timedelta
+    yesterday_str = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    query = f"SELECT * FROM articles WHERE published_date >= '{yesterday_str}'"
     
     try:
-        df = pd.read_sql_query("SELECT * FROM articles", conn)
+        df = pd.read_sql_query(query, conn)
     except:
         df = pd.DataFrame()
     conn.close()
     
     # Ensure daily_reports directory exists
-    output_dir = "daily_reports"
+    output_dir = os.path.join(BASE_DIR, "daily_reports")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    filename = os.path.join(output_dir, f"{today_str}_{time_str}_AI_NEWS_DAILY.md")
+    # 버전 관리 로직 (v1, v2, v3...)
+    version = 1
+    while True:
+        filename = os.path.join(output_dir, f"{today_str}_AI-NEWS-DAILY_v{version}.md")
+        if not os.path.exists(filename):
+            break
+        version += 1
     
-    md_content = f"# 📅 {today_str} AI NEWS DAILY ({time_str})\n\n"
+    md_content = f"# 📅 {today_str} AI NEWS DAILY (v{version})\n\n"
     md_content += "---\n\n"
     
     if df.empty:
-        md_content += "수집된 뉴스가 없습니다.\n"
+        md_content += "최근 24시간 내에 수집된 뉴스가 없습니다.\n"
     else:
+        # Fill NaN values to avoid 'nan' string in report
+        df = df.fillna("")
         df = df.sort_values(by='scraped_at', ascending=False)
         latest_df = df.groupby('source', as_index=False).head(1)
         
         for _, row in latest_df.iterrows():
-            md_content += f"## [{row['source']}] {row['title_kr']}\n"
+            title_kr = row['title_kr'] if row['title_kr'] else "제목 없음"
+            summary_kr = row['summary_kr'] if row['summary_kr'] else "요약 없음"
+            title_en = row['title_en'] if row['title_en'] else "No English Title"
+            
+            md_content += f"## [{row['source']}] {title_kr}\n"
             md_content += f"**날짜:** {row['published_date']}\n\n"
-            md_content += f"> {row['title_en']}\n\n"
+            md_content += f"> {title_en}\n\n"
             md_content += f"**[원문 보러가기]({row['url']})**\n\n"
-            md_content += f"### 📝 핵심 요약\n{row['summary_kr']}\n\n"
+            md_content += f"### 📝 핵심 요약\n{summary_kr}\n\n"
             md_content += "---\n\n"
             
     with open(filename, "w") as f:
         f.write(md_content)
     print(f"\n📄 Daily Report Generated: {filename}")
+
+def run_cli():
+    asyncio.run(scrape_and_process())
 
 if __name__ == "__main__":
     asyncio.run(scrape_and_process())
