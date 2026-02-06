@@ -8,5 +8,6 @@ node_modules/
 check_anthropic.py
 # daily_reports/ (Removed to allow syncing to GitHub)
 *.md
+!daily_reports/*.md
 .gemini/
 gha-creds-*.json
